@@ -4,13 +4,42 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Default admin password if not set in environment
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'snapper2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_snapper_app_2024';
+
+// For development, we'll use a fixed hash of the default password
+// In production, you should use environment variables for both the password and its hash
+const ADMIN_PASSWORD_HASH = '$2b$10$hRRASM2gMxbKTVfo7w3efOePunwr1iNXk/Y95WJiisyDrTvO9bB4m'; // Hash of 'snapper2024'
+
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
+
+// Authentication middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access denied' });
+  }
+
+  try {
+    const verified = jwt.verify(token, JWT_SECRET);
+    req.user = verified;
+    next();
+  } catch (err) {
+    res.status(403).json({ error: 'Invalid token' });
+  }
+};
 
 // Serve static files from React build
 app.use(express.static(path.join(__dirname, '../frontend/build')));
@@ -106,6 +135,57 @@ app.get('/api/heatmap', async (req, res) => {
   } catch (error) {
     console.error('Error fetching heatmap data:', error);
     res.status(500).json({ error: 'Failed to fetch heatmap data' });
+  }
+});
+
+// Test endpoint to verify server is working
+app.get('/api/test', (req, res) => {
+  console.log('Test endpoint hit');
+  res.json({ message: 'Server is working', timestamp: new Date().toISOString() });
+});
+
+// Authentication Routes
+app.post('/api/admin/auth', async (req, res) => {
+  try {
+    const { password } = req.body;
+    
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+
+    const validPassword = password === ADMIN_PASSWORD;
+
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+
+    const token = jwt.sign({ isAdmin: true }, JWT_SECRET, { expiresIn: '24h' });
+    res.json({ success: true, token });
+  } catch (error) {
+    console.error('Auth error:', error);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+});
+
+app.get('/api/admin/verify', authenticateToken, (req, res) => {
+  res.json({ success: true });
+});
+
+// Protected Admin Routes
+app.get('/api/admin/heatmap', authenticateToken, async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT *, DATE_FORMAT(timestamp, "%Y-%m-%d %H:%i:%s") as formatted_timestamp FROM click_data'
+    );
+    
+    res.json({ 
+      success: true, 
+      data: rows,
+      count: rows.length 
+    });
+  } catch (error) {
+    console.error('Error fetching admin heatmap data:', error);
+    res.status(500).json({ error: 'Failed to fetch admin heatmap data' });
   }
 });
 
